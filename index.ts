@@ -17,7 +17,7 @@ import { buildingRouteHandler } from "./routes.ts";
 const SCRIPTS = [
   "dig", "open", "link", "unlink", "clone", "destroy",
   "describe", "examine", "name", "set", "setAttr",
-  "lock", "quota", "parent", "wipe",
+  "lock", "quota", "parent", "wipe", "oemit",
 ] as const;
 
 // ─── load script content at init time ─────────────────────────────────────────
@@ -46,8 +46,8 @@ const onLogin = (_e: SessionEvent) => {
 
 export const plugin: IPlugin = {
   name:        "builder",
-  version:     "1.0.0",
-  description: "World-building commands and REST API — @dig, @open, @link, @describe, @examine, and more.",
+  version:     "1.1.0",
+  description: "World-building commands and REST API — @dig, @open, @link, @describe, @examine, @oemit, and more.",
 
   init: async () => {
     // Register all builder scripts — they override engine bundled copies
@@ -66,7 +66,7 @@ export const plugin: IPlugin = {
     // Wire lifecycle hooks
     gameHooks.on("player:login", onLogin);
 
-    console.log("[builder-plugin] Loaded — 15 scripts + REST API at /api/v1/building");
+    console.log("[builder-plugin] Loaded — 16 scripts + REST API at /api/v1/building");
     return true;
   },
 

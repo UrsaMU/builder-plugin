@@ -22,6 +22,7 @@
 | `@parent` | `@parent[/clear] <target>[=<parent>]` | builder+ | Set/clear parent object |
 | `@quota` | `@quota [<player>=<n>]` | connected / admin+ | View or set quota |
 | `@wipe` | `@wipe[/confirm] <target>` | builder+ | Wipe all attributes |
+| `@oemit` | `@oemit <message>` | connected | Emit to others in current room (unattributed) |
 
 ## REST API
 
@@ -70,7 +71,7 @@ Add to `plugins.manifest.json` in your game project:
 {
   "name": "builder",
   "url": "https://github.com/UrsaMU/builder-plugin",
-  "ref": "v1.0.0",
+  "ref": "v1.1.0",
   "description": "World-building commands and REST API",
   "ursamu": ">=1.9.5"
 }
@@ -91,3 +92,7 @@ No configuration required. All commands respect the player's quota. Staff (admin
 - REST routes persist until server restart (no unload mechanism for `registerPluginRoute`).
 - Scripts registered via `registerScript()` are also persistent until restart — local `system/scripts/` overrides still take priority.
 - Orphaned exits are automatically cleaned up when a room is destroyed.
+- `@destroy` sends all connected occupants home before removing a room, then refunds quota to the non-staff owner.
+- `@link <target>=home` sets the link destination to your current room without needing its dbref.
+- `@oemit` sends to everyone in your current room except yourself — useful for room events and softcode triggers.
+- `@emit <message>` (no target) sends to your current room and is builder-accessible; `@emit <room>=<message>` remains admin-only (handled by the engine script).

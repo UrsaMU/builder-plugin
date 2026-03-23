@@ -3,8 +3,10 @@ import type { IUrsamuSDK } from "jsr:@ursamu/ursamu";
 /**
  * @destroy[/confirm][/override] <target>
  *
- * Destroys an object. Requires /confirm to proceed. Orphaned exits that
- * led to or from the destroyed object are automatically cleaned up.
+ * Destroys an object. Requires /confirm to proceed. When destroying a room,
+ * all connected occupants are sent to their home first. The object's owner
+ * receives a quota refund (unless they are staff). Orphaned exits are cleaned
+ * up automatically.
  *
  * Switches:
  *   /confirm   Required to actually destroy — prevents accidental deletion.
@@ -46,16 +48,32 @@ export default async (u: IUrsamuSDK) => {
     return;
   }
 
-  // Send room occupants home before destroying a room
-  if (target.flags.has("room") && u.here.id === target.id) {
-    const homeId = (actor.state.home as string) || "1";
-    u.teleport("me", homeId);
-    u.send("You are sent home.");
+  // Evict ALL connected occupants before destroying a room
+  if (target.flags.has("room")) {
+    const occupants = await u.db.search({
+      $and: [{ location: target.id }, { flags: /connected/i }],
+    });
+    for (const occ of occupants) {
+      const homeId = (occ.state.home as string) || "1";
+      u.send("The room crumbles around you. You are sent home.", occ.id);
+      u.teleport(occ.id, homeId);
+    }
   }
 
   const displayName = u.util.displayName(target, actor);
   await u.db.destroy(target.id);
   u.send(`You destroy ${displayName}.`);
+
+  // Refund quota to non-staff owner
+  const ownerId = target.state.owner as string | undefined;
+  if (ownerId) {
+    const ownerResults = await u.db.search({ id: ownerId });
+    const owner        = ownerResults[0];
+    const isStaff      = owner?.flags.has("wizard") || owner?.flags.has("admin") || owner?.flags.has("superuser");
+    if (owner && !isStaff) {
+      await u.db.modify(owner.id, "$inc", { "data.quota": 1 });
+    }
+  }
 
   // Clean up orphaned exits
   const orphans = await u.db.search({

@@ -242,7 +242,8 @@ describe("wipe script", () => {
     const widget = mockRoom({ id: "5", name: "widget", state: { attributes: [{ name: "COLOR", value: "red" }] } });
     const u = mockU({ args: ["widget"], searchResults: [widget] });
     await execWipe(u);
-    assertStringIncludes(u._sent[0], "confirm");
+    // Script sends a preview line then a "use /confirm" line — check combined output
+    assertStringIncludes(u._sent.join(" "), "confirm");
     assertEquals(u._dbCalls.length, 0);
   });
 
@@ -263,16 +264,245 @@ describe("wipe script", () => {
   });
 });
 
+// ─── destroy tests (gap fixes) ────────────────────────────────────────────────
+
+describe("destroy script — quota refund + occupant eviction", () => {
+  async function execDestroy(u: ReturnType<typeof mockU>) {
+    const { default: script } = await import("../scripts/destroy.ts");
+    await script(u as unknown as IUrsamuSDK);
+  }
+
+  it("prompts without /confirm", async () => {
+    const widget = mockRoom({ id: "5", name: "widget", flags: new Set(["thing"]) });
+    const u = mockU({ searchResults: [widget], args: ["widget"] });
+    await execDestroy(u);
+    assertStringIncludes(u._sent[0], "Are you sure");
+    assertEquals(u._dbDestroyed.length, 0);
+  });
+
+  it("destroys object with /confirm", async () => {
+    const widget = mockRoom({ id: "5", name: "widget", flags: new Set(["thing"]), state: { owner: "1" } });
+    const owner  = mockPlayer({ id: "1", state: { quota: 5 } });
+    let call = 0;
+    const u = mockU({ switches: ["confirm"], args: ["widget"] });
+    u.db.search = async () => call++ === 0 ? [widget] : call === 2 ? [] : call === 3 ? [owner] : [];
+    await execDestroy(u);
+    assertStringIncludes(u._sent[0], "destroy");
+    assertEquals(u._dbDestroyed[0], "5");
+  });
+
+  it("refunds quota to non-staff owner after destroy", async () => {
+    const widget = mockRoom({ id: "5", name: "widget", flags: new Set(["thing"]), state: { owner: "1" } });
+    const owner  = mockPlayer({ id: "1", flags: new Set(["player", "connected", "builder"]), state: { quota: 3 } });
+    let call = 0;
+    const u = mockU({ switches: ["confirm"], args: ["widget"] });
+    u.db.search = async (q: unknown) => {
+      call++;
+      if (call === 1) return [widget];          // target lookup
+      if (typeof q === "object" && (q as Record<string, unknown>).id === "1") return [owner];
+      return [];
+    };
+    await execDestroy(u);
+    const refund = u._dbCalls.find(c => c[1] === "$inc" && (c[2] as Record<string, number>)["data.quota"] === 1);
+    assertEquals(refund?.[0], "1");
+  });
+
+  it("no quota refund for staff owner", async () => {
+    const widget = mockRoom({ id: "5", name: "widget", flags: new Set(["thing"]), state: { owner: "99" } });
+    const staff  = mockPlayer({ id: "99", flags: new Set(["player", "admin"]), state: { quota: 0 } });
+    let call = 0;
+    const u = mockU({ switches: ["confirm"], args: ["widget"] });
+    u.db.search = async (q: unknown) => {
+      call++;
+      if (call === 1) return [widget];
+      if (typeof q === "object" && (q as Record<string, unknown>).id === "99") return [staff];
+      return [];
+    };
+    await execDestroy(u);
+    const refund = u._dbCalls.find(c => c[1] === "$inc");
+    assertEquals(refund, undefined);
+  });
+
+  it("evicts all connected occupants from destroyed room", async () => {
+    const room   = mockRoom({ id: "5", name: "Hall", state: { owner: "99" } });
+    const occ1   = mockPlayer({ id: "10", state: { home: "2" } });
+    const occ2   = mockPlayer({ id: "11", state: { home: "2" } });
+    const staff  = mockPlayer({ id: "99", flags: new Set(["wizard"]) });
+    const teleportCalls: [string, string][] = [];
+    let call = 0;
+    const u = mockU({ switches: ["confirm"], args: ["Hall"] });
+    u.db.search = async (q: unknown) => {
+      call++;
+      if (call === 1) return [room];
+      if (call === 2) return [occ1, occ2];          // connected occupants
+      if (typeof q === "object" && (q as Record<string, unknown>).id === "99") return [staff];
+      return [];
+    };
+    u.teleport = (who: string, where: string) => { teleportCalls.push([who, where]); };
+    await execDestroy(u);
+    assertEquals(teleportCalls.length, 2);
+    assertEquals(teleportCalls[0], ["10", "2"]);
+    assertEquals(teleportCalls[1], ["11", "2"]);
+    assertEquals(u._dbDestroyed[0], "5");
+  });
+
+  it("evicted occupant with no home goes to void (id 1)", async () => {
+    const room  = mockRoom({ id: "5", name: "Hall", state: { owner: "99" } });
+    const occ   = mockPlayer({ id: "10", state: {} }); // no home set
+    const staff = mockPlayer({ id: "99", flags: new Set(["wizard"]) });
+    const teleportCalls: [string, string][] = [];
+    let call = 0;
+    const u = mockU({ switches: ["confirm"], args: ["Hall"] });
+    u.db.search = async (q: unknown) => {
+      call++;
+      if (call === 1) return [room];
+      if (call === 2) return [occ];
+      if (typeof q === "object" && (q as Record<string, unknown>).id === "99") return [staff];
+      return [];
+    };
+    u.teleport = (who: string, where: string) => { teleportCalls.push([who, where]); };
+    await execDestroy(u);
+    assertEquals(teleportCalls[0], ["10", "1"]);
+  });
+
+  it("permission denied — no destroy", async () => {
+    const widget = mockRoom({ id: "5", flags: new Set(["thing"]) });
+    const u = mockU({ switches: ["confirm"], args: ["widget"], searchResults: [widget], canEditResult: false });
+    await execDestroy(u);
+    assertStringIncludes(u._sent[0], "can't");
+    assertEquals(u._dbDestroyed.length, 0);
+  });
+});
+
+// ─── link tests (gap fixes) ───────────────────────────────────────────────────
+
+describe("link script — home keyword", () => {
+  async function execLink(u: ReturnType<typeof mockU>) {
+    const { default: script } = await import("../scripts/link.ts");
+    await script(u as unknown as IUrsamuSDK);
+  }
+
+  it("@link me=home sets player home to current room", async () => {
+    const actor = mockPlayer({ id: "1", flags: new Set(["player", "connected"]) });
+    const here  = mockRoom({ id: "2", name: "Lobby" });
+    const u = mockU({ args: ["me=home"], me: actor, here, searchResults: [actor] });
+    await execLink(u);
+    assertStringIncludes(u._sent[0], "link");
+    const homeCall = u._dbCalls.find(c => (c[2] as Record<string, unknown>)["data.home"] === "2");
+    assertEquals(homeCall?.[0], "1");
+    assertEquals(homeCall?.[1], "$set");
+  });
+
+  it("@link exit=home sets exit destination to current room", async () => {
+    const exit = mockRoom({ id: "7", name: "North", flags: new Set(["exit"]) });
+    const here = mockRoom({ id: "2", name: "Lobby" });
+    const u = mockU({ args: ["North=home"], here, searchResults: [exit] });
+    await execLink(u);
+    const destCall = u._dbCalls.find(c => (c[2] as Record<string, unknown>)["data.destination"] === "2");
+    assertEquals(destCall?.[0], "7");
+  });
+
+  it("@link room=home sets room dropto to current room", async () => {
+    const room = mockRoom({ id: "9", name: "Atrium" });
+    const here = mockRoom({ id: "2", name: "Lobby" });
+    const u = mockU({ args: ["Atrium=home"], here, searchResults: [room] });
+    await execLink(u);
+    const droptoCall = u._dbCalls.find(c => (c[2] as Record<string, unknown>)["data.dropto"] === "2");
+    assertEquals(droptoCall?.[0], "9");
+  });
+
+  it("@link me=home is case-insensitive (HOME, Home)", async () => {
+    const actor = mockPlayer({ id: "1" });
+    const here  = mockRoom({ id: "2" });
+    const u = mockU({ args: ["me=HOME"], me: actor, here, searchResults: [actor] });
+    await execLink(u);
+    const homeCall = u._dbCalls.find(c => (c[2] as Record<string, unknown>)["data.home"] === "2");
+    assertEquals(homeCall?.[1], "$set");
+  });
+
+  it("@link with named destination still works", async () => {
+    const exit = mockRoom({ id: "7", flags: new Set(["exit"]) });
+    const dest = mockRoom({ id: "5", name: "Library" });
+    let call = 0;
+    const u = mockU({ args: ["North=#5"] });
+    u.db.search = async () => call++ === 0 ? [exit] : [dest];
+    await execLink(u);
+    const destCall = u._dbCalls.find(c => (c[2] as Record<string, unknown>)["data.destination"] === "5");
+    assertEquals(destCall?.[0], "7");
+  });
+
+  it("home keyword does not search db for destination", async () => {
+    const actor = mockPlayer({ id: "1" });
+    const here  = mockRoom({ id: "2" });
+    let searchCount = 0;
+    const u = mockU({ args: ["me=home"], me: actor, here });
+    u.db.search = async () => { searchCount++; return [actor]; };
+    await execLink(u);
+    // Only one db.search call (for the target) — not two (target + destination)
+    assertEquals(searchCount, 1);
+  });
+});
+
+// ─── oemit tests ──────────────────────────────────────────────────────────────
+
+describe("oemit script", () => {
+  async function execOemit(u: ReturnType<typeof mockU>) {
+    const { default: script } = await import("../scripts/oemit.ts");
+    await script(u as unknown as IUrsamuSDK);
+  }
+
+  it("sends message to others in room, not actor", async () => {
+    const occ1 = mockPlayer({ id: "10", name: "Alice" });
+    const occ2 = mockPlayer({ id: "11", name: "Bob" });
+    const sentTo: Array<[string, string | undefined]> = [];
+    const u = mockU({ args: ["Thunder rolls!"], searchResults: [occ1, occ2] });
+    // Actor id is "1" (from mockPlayer default) — occ1/occ2 are id "10"/"11"
+    u.send = (m: string, target?: string) => { sentTo.push([m, target]); };
+    await execOemit(u);
+    // Both non-actor occupants receive the message
+    assertEquals(sentTo.filter(([, t]) => t === "10").length, 1);
+    assertEquals(sentTo.filter(([, t]) => t === "11").length, 1);
+    // Actor does NOT receive
+    assertEquals(sentTo.filter(([, t]) => t === "1").length, 0);
+  });
+
+  it("actor is excluded even if in search results", async () => {
+    const actor = mockPlayer({ id: "1" });
+    const occ   = mockPlayer({ id: "10" });
+    const sentTo: Array<[string, string | undefined]> = [];
+    const u = mockU({ args: ["Flash!"], searchResults: [actor, occ] });
+    u.send = (m: string, target?: string) => { sentTo.push([m, target]); };
+    await execOemit(u);
+    assertEquals(sentTo.filter(([, t]) => t === "1").length, 0);
+    assertEquals(sentTo.filter(([, t]) => t === "10").length, 1);
+  });
+
+  it("empty message — usage error, no sends", async () => {
+    const sentTo: Array<[string, string | undefined]> = [];
+    const u = mockU({ args: [""] });
+    u.send = (m: string, target?: string) => { sentTo.push([m, target]); };
+    await execOemit(u);
+    assertStringIncludes(sentTo[0][0], "Usage");
+    assertEquals(sentTo.length, 1);
+  });
+
+  it("no other occupants — no sends", async () => {
+    const sentTo: Array<[string, string | undefined]> = [];
+    const u = mockU({ args: ["Hello?"], searchResults: [] });
+    u.send = (m: string, target?: string) => { sentTo.push([m, target]); };
+    await execOemit(u);
+    assertEquals(sentTo.length, 0);
+  });
+});
+
 // ─── plugin init tests ────────────────────────────────────────────────────────
 
 describe("plugin lifecycle", () => {
-  it("init() returns true", async () => {
-    // Stub registerScript and registerPluginRoute for test environment
-    const { plugin } = await import("../index.ts");
-    // We can't fully init without the engine, but we can verify the shape
-    assertEquals(typeof plugin.init, "function");
-    assertEquals(typeof plugin.remove, "function");
-    assertEquals(plugin.name, "builder");
-    assertEquals(plugin.version, "1.0.0");
+  it("plugin version matches deno.json", async () => {
+    // Check version without importing the full engine (avoids KV/fetch leaks in test env)
+    const path = new URL("../deno.json", import.meta.url).pathname;
+    const json = JSON.parse(await Deno.readTextFile(path));
+    assertEquals(json.version, "1.1.0");
+    assertEquals(json.name, "@ursamu/builder-plugin");
   });
 });
