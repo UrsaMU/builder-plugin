@@ -43,7 +43,16 @@ export default async (u: IUrsamuSDK) => {
   const existingIndex  = attributes.findIndex((a: any) => a.name === attrName);
 
   if (value !== undefined) {
-    const newAttr = { name: attrName, value: value.trim(), setter: u.me.id, type: "attribute" };
+    const trimmedValue = value.trim();
+    if (trimmedValue.length > 4096) {
+      u.send("Attribute value too long (max 4096 characters).");
+      return;
+    }
+    if (existingIndex < 0 && attributes.length >= 100) {
+      u.send("Too many attributes (limit 100). Remove some before adding new ones.");
+      return;
+    }
+    const newAttr = { name: attrName, value: trimmedValue, setter: u.me.id, type: "attribute" };
     if (existingIndex >= 0) {
       attributes[existingIndex] = newAttr;
     } else {

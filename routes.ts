@@ -60,6 +60,9 @@ export async function buildingRouteHandler(req: Request, userId: string): Promis
     if (!name || typeof name !== "string") return json({ error: "name is required" }, 400);
     if (name.length > 200) return json({ error: "name must be ≤ 200 characters" }, 400);
     if (description.length > 4096) return json({ error: "description must be ≤ 4096 characters" }, 400);
+    if (parent !== undefined && (typeof parent !== "string" || parent.length > 64)) {
+      return json({ error: "parent must be a valid object ID (≤ 64 characters)" }, 400);
+    }
 
     const id = getNextId();
     const room = {
@@ -163,6 +166,7 @@ export async function buildingRouteHandler(req: Request, userId: string): Promis
 
       const { name, destination } = body as Record<string, string>;
       if (!name || typeof name !== "string") return json({ error: "name is required" }, 400);
+      if (name.length > 200) return json({ error: "exit name must be ≤ 200 characters" }, 400);
       if (!destination || typeof destination !== "string") return json({ error: "destination is required" }, 400);
 
       const destRoom = await dbojs.queryOne({ id: destination });

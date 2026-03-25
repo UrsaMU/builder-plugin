@@ -3,7 +3,8 @@
  *
  * Provides world-building commands (@dig, @open, @link, @unlink, @clone,
  * @destroy, @describe, @examine, @name, @set, &ATTR, @lock, @parent,
- * @quota, @wipe) and a REST API for programmatic world building.
+ * @quota, @wipe, @zone, @batchbuild) and a REST API for programmatic world
+ * building.
  *
  * @module builder-plugin
  */
@@ -11,6 +12,7 @@
 import { registerScript, registerPluginRoute, gameHooks } from "jsr:@ursamu/ursamu";
 import type { IPlugin, SessionEvent } from "jsr:@ursamu/ursamu";
 import { buildingRouteHandler } from "./routes.ts";
+import { registerBatchBuildCmd } from "./batchbuild.ts";
 
 // ─── script names bundled by this plugin ──────────────────────────────────────
 
@@ -18,6 +20,7 @@ const SCRIPTS = [
   "dig", "open", "link", "unlink", "clone", "destroy",
   "describe", "examine", "name", "set", "setAttr",
   "lock", "quota", "parent", "wipe", "oemit",
+  "zone",
 ] as const;
 
 // ─── load script content at init time ─────────────────────────────────────────
@@ -46,7 +49,7 @@ const onLogin = (_e: SessionEvent) => {
 
 export const plugin: IPlugin = {
   name:        "builder",
-  version:     "1.1.0",
+  version:     "1.2.0",
   description: "World-building commands and REST API — @dig, @open, @link, @describe, @examine, @oemit, and more.",
 
   init: async () => {
@@ -60,13 +63,16 @@ export const plugin: IPlugin = {
       }
     }
 
+    // Register native addCmd commands (require filesystem access)
+    registerBatchBuildCmd();
+
     // Mount REST API
     registerPluginRoute("/api/v1/building", buildingRouteHandler);
 
     // Wire lifecycle hooks
     gameHooks.on("player:login", onLogin);
 
-    console.log("[builder-plugin] Loaded — 16 scripts + REST API at /api/v1/building");
+    console.log("[builder-plugin] Loaded — 17 scripts + @batchbuild + REST API at /api/v1/building");
     return true;
   },
 

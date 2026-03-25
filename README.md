@@ -1,6 +1,6 @@
 # builder-plugin
 
-> World-building commands and REST API for UrsaMU — dig rooms, create exits, describe objects, and build programmatically.
+> World-building commands, zone management, and build file tools for UrsaMU.
 
 ## Commands
 
@@ -23,6 +23,27 @@
 | `@quota` | `@quota [<player>=<n>]` | connected / admin+ | View or set quota |
 | `@wipe` | `@wipe[/confirm] <target>` | builder+ | Wipe all attributes |
 | `@oemit` | `@oemit <message>` | connected | Emit to others in current room (unattributed) |
+| `@zone` | `@zone[/<switch>] [<args>]` | builder+ | Manage Zone Master Objects |
+| `@batchbuild` | `@batchbuild[/<switch>] <args>` | admin+ | Save/run build script files |
+
+### @zone switches
+
+| Switch | Syntax | Description |
+|--------|--------|-------------|
+| `/create` | `@zone/create <name>` | Create a Zone Master Object (ZMO) |
+| `/destroy` | `@zone/destroy <name>` | Destroy a ZMO and unlink all its rooms |
+| `/add` | `@zone/add [<room>=]<zone>` | Link a room to a zone (defaults to current room) |
+| `/remove` | `@zone/remove [<room>=]<zone>` | Unlink a room from a zone |
+| `/list` | `@zone/list [<zone>]` | List all zones, or rooms in a zone |
+| `/info` | `@zone/info <zone>` | Show zone details and room count |
+
+### @batchbuild switches
+
+| Switch | Syntax | Description |
+|--------|--------|-------------|
+| `/save` | `@batchbuild/save <zone>=<filename>` | Export zone to `builds/<filename>.txt` |
+| `/run` | `@batchbuild/run <filename>` | Execute all commands from a build file |
+| `/list` | `@batchbuild/list` | List saved build files |
 
 ## REST API
 
@@ -71,7 +92,7 @@ Add to `plugins.manifest.json` in your game project:
 {
   "name": "builder",
   "url": "https://github.com/UrsaMU/builder-plugin",
-  "ref": "v1.1.0",
+  "ref": "v1.2.0",
   "description": "World-building commands and REST API",
   "ursamu": ">=1.9.5"
 }
@@ -87,6 +108,49 @@ deno task cli plugin add https://github.com/UrsaMU/builder-plugin
 
 No configuration required. All commands respect the player's quota. Staff (admin/wizard/superuser) bypass quota checks.
 
+## Zones
+
+A **Zone Master Object (ZMO)** is a game object (`thing zone`) that rooms can be linked to. Rooms reference their zone via `state.zone = <zmoId>`. One zone per room maximum; assigning a new zone overwrites the old one.
+
+```
+@zone/create Market District          ← creates ZMO #50
+@dig/teleport Market Square           ← create and enter the room
+@describe here=A bustling square.
+@zone/add here=Market District        ← link room to zone
+@zone/list Market District            ← see all rooms in zone
+```
+
+## Build Files
+
+Build files are plain text files saved in the `builds/` directory (relative to the game root). Each non-blank, non-`#` line is an in-game command. Lines starting with `#` are comments.
+
+```bash
+@batchbuild/save Market District=market   ← saves builds/market.txt
+@batchbuild/run market                    ← re-runs the whole zone
+@batchbuild/list                          ← see all saved files
+```
+
+Generated file format:
+```
+# UrsaMU Build Script
+# Zone: Market District (#50)
+# Generated: 2026-03-24
+
+# ─── Room: Market Square (#5) ───
+@dig/teleport Market Square
+@describe here=A bustling square filled with merchants.
+@zone/add here=Market District
+@open North;N=The Tavern
+
+# ─── Room: The Tavern (#6) ───
+@dig/teleport The Tavern
+@describe here=A warm tavern.
+@zone/add here=Market District
+@open South;S=Market Square
+```
+
+Cross-zone exits (exits whose destination is outside the saved zone) are preserved as comments and must be restored manually.
+
 ## Notes
 
 - REST routes persist until server restart (no unload mechanism for `registerPluginRoute`).
@@ -95,4 +159,5 @@ No configuration required. All commands respect the player's quota. Staff (admin
 - `@destroy` sends all connected occupants home before removing a room, then refunds quota to the non-staff owner.
 - `@link <target>=home` sets the link destination to your current room without needing its dbref.
 - `@oemit` sends to everyone in your current room except yourself — useful for room events and softcode triggers.
-- `@emit <message>` (no target) sends to your current room and is builder-accessible; `@emit <room>=<message>` remains admin-only (handled by the engine script).
+- `@batchbuild/run` has a hard cap of 2000 commands per file to prevent runaway execution.
+- Build file names may only contain letters, digits, hyphens, and underscores (no path traversal).

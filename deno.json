@@ -1,12 +1,12 @@
 {
   "name": "@ursamu/builder-plugin",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "description": "World-building plugin for UrsaMU — @dig, @open, @link, @describe, @examine, and a REST API.",
   "exports": {
     ".": "./mod.ts"
   },
   "publish": {
-    "include": ["scripts", "mod.ts", "index.ts", "routes.ts", "deno.json", "README.md"],
+    "include": ["scripts", "mod.ts", "index.ts", "routes.ts", "batchbuild.ts", "deno.json", "README.md"],
     "exclude": ["tests"]
   },
   "imports": {

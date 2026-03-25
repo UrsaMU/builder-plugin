@@ -24,6 +24,8 @@ export default async (u: IUrsamuSDK) => {
   const targetName = input.slice(0, eqIdx).trim();
   const newName    = input.slice(eqIdx + 1).trim();
 
+  if (newName.length > 200) { u.send("Name too long (max 200 characters)."); return; }
+
   const target = await u.util.target(u.me, targetName, true);
   if (!target) { u.send("I can't find that."); return; }
   if (!(await u.canEdit(u.me, target))) { u.send("Permission denied."); return; }

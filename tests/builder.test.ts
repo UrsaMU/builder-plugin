@@ -502,7 +502,7 @@ describe("plugin lifecycle", () => {
     // Check version without importing the full engine (avoids KV/fetch leaks in test env)
     const path = new URL("../deno.json", import.meta.url).pathname;
     const json = JSON.parse(await Deno.readTextFile(path));
-    assertEquals(json.version, "1.1.0");
+    assertEquals(json.version, "1.2.0");
     assertEquals(json.name, "@ursamu/builder-plugin");
   });
 });

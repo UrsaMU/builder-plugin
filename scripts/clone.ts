@@ -22,6 +22,10 @@ export default async (u: IUrsamuSDK) => {
     u.send("Usage: @clone <obj>=<new name>");
     return;
   }
+  if (newName && newName.length > 200) {
+    u.send("Name too long (max 200 characters).");
+    return;
+  }
 
   const results = await u.db.search(objName);
   const obj     = results[0];
