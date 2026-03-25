@@ -69,6 +69,14 @@ export const plugin: IPlugin = {
     // Mount REST API
     registerPluginRoute("/api/v1/building", buildingRouteHandler);
 
+    // Soft-register help directory with ursamu-help-plugin (optional dependency)
+    try {
+      const { registerHelpDir } = await import("jsr:@ursamu/help-plugin");
+      registerHelpDir(new URL("./help", import.meta.url).pathname, "building");
+    } catch {
+      // ursamu-help-plugin not installed — in-game help unavailable for builder commands
+    }
+
     // Wire lifecycle hooks
     gameHooks.on("player:login", onLogin);
 
