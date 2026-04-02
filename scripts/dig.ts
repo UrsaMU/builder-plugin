@@ -5,6 +5,15 @@ import type { IUrsamuSDK } from "jsr:@ursamu/ursamu";
  *
  * Creates a room and optionally one or two connecting exits.
  *
+ * TinyMUX cost model:
+ *   Room creation:    10 coins
+ *   Exit open:         1 coin
+ *   Exit link:         1 coin  (each linked exit costs 2 total)
+ *
+ *   @dig Hall                  → 10
+ *   @dig Hall=North;N          → 12 (10 + 2)
+ *   @dig Hall=North;N,South;S  → 14 (10 + 2 + 2)
+ *
  * Switches:
  *   /teleport  Teleport to the newly created room.
  *   /tel       Alias for /teleport.
@@ -30,8 +39,10 @@ export default async (u: IUrsamuSDK) => {
   const fromExit = match[3] ? match[3].trim() : "";
 
   const isStaff = actor.flags.has("wizard") || actor.flags.has("admin") || actor.flags.has("superuser");
-  const quota   = (actor.state.quota as number) ?? 0;
-  const cost    = 1 + (toExit ? 1 : 0) + (fromExit ? 1 : 0);
+
+  // TinyMUX cost: 10 for room, 2 per linked exit (1 open + 1 link)
+  const cost = 10 + (toExit ? 2 : 0) + (fromExit ? 2 : 0);
+  const quota = (actor.state.quota as number) ?? 0;
 
   if (!isStaff && quota < cost) {
     u.send(`You don't have enough quota. Cost: ${cost}, You have: ${quota}.`);

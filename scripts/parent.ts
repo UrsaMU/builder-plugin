@@ -1,21 +1,30 @@
 import type { IUrsamuSDK, IDBObj } from "jsr:@ursamu/ursamu";
 
 /**
- * @parent <target>=<parent>   — set parent object
- * @parent/clear <target>      — remove parent
+ * @parent <target>[=<parent>]
  *
- * Switches:
- *   /clear  Remove the parent from the target.
+ * Sets the parent of <target> to <parent>. Omitting or leaving <parent>
+ * empty clears the parent (TinyMUX canonical form — no switch required).
+ *
+ * TinyMUX rules:
+ *   • You must control <target>.
+ *   • You must own <parent> OR <parent> must have the PARENT_OK flag set.
+ *   • Circular parent chains are rejected.
+ *
+ * Legacy support:
+ *   @parent/clear <target>  — still accepted (backward compat)
  *
  * Examples:
  *   @parent widget=proto-widget
- *   @parent/clear widget
+ *   @parent widget=           — clears parent
+ *   @parent/clear widget      — same as above (legacy)
  */
 export default async (u: IUrsamuSDK) => {
   const actor    = u.me;
   const fullArgs = (u.cmd.args[0] || "").trim();
   const swtch    = (u.cmd.switches?.[0] || "").toLowerCase();
 
+  // ── Legacy /clear switch (backward compat) ────────────────────────────────
   if (swtch === "clear") {
     if (!fullArgs) { u.send("Usage: @parent/clear <target>"); return; }
     const results = await u.db.search(fullArgs);
@@ -27,20 +36,46 @@ export default async (u: IUrsamuSDK) => {
     return;
   }
 
-  const match = fullArgs.match(/^(.+?)\s*=\s*(.*)$/);
-  if (!match) { u.send("Usage: @parent <target>=<parent>"); return; }
+  // ── Parse: @parent obj=parent  or  @parent obj= ───────────────────────────
+  const eqIdx = fullArgs.indexOf("=");
 
-  const targetName = match[1].trim();
-  const parentName = match[2].trim();
+  if (eqIdx === -1) {
+    // No = sign at all — show usage
+    u.send("Usage: @parent <target>[=<parent>]  (leave parent empty to clear)");
+    return;
+  }
+
+  const targetName = fullArgs.slice(0, eqIdx).trim();
+  const parentName = fullArgs.slice(eqIdx + 1).trim();
+
+  if (!targetName) {
+    u.send("Usage: @parent <target>[=<parent>]");
+    return;
+  }
 
   const tResults = await u.db.search(targetName);
   const target   = tResults[0];
   if (!target) { u.send(`Could not find target: ${targetName}`); return; }
   if (!(await u.canEdit(actor, target))) { u.send("Permission denied."); return; }
 
+  // ── Empty parent = clear ──────────────────────────────────────────────────
+  if (!parentName) {
+    await u.db.modify(target.id, "$unset", { "data.parent": 1 });
+    u.send(`Parent cleared for ${u.util.displayName(target, actor)}.`);
+    return;
+  }
+
+  // ── Set parent ────────────────────────────────────────────────────────────
   const pResults  = await u.db.search(parentName);
   const parentObj = pResults[0];
   if (!parentObj) { u.send(`Could not find parent: ${parentName}`); return; }
+
+  // TinyMUX: must own parent OR parent has PARENT_OK
+  const canUseParent = (await u.canEdit(actor, parentObj)) || parentObj.flags.has("parent_ok");
+  if (!canUseParent) {
+    u.send("Permission denied: you don't own that parent and it isn't PARENT_OK.");
+    return;
+  }
 
   // Circular reference check
   const visited = new Set<string>();

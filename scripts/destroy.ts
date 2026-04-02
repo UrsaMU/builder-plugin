@@ -1,31 +1,32 @@
 import type { IUrsamuSDK } from "jsr:@ursamu/ursamu";
 
 /**
- * @destroy[/confirm][/override] <target>
+ * @destroy[/override][/instant] <object>
  *
- * Destroys an object. Requires /confirm to proceed. When destroying a room,
- * all connected occupants are sent to their home first. The object's owner
- * receives a quota refund (unless they are staff). Orphaned exits are cleaned
- * up automatically.
+ * Destroys <object> and refunds its creation cost to the owner.
  *
- * Switches:
- *   /confirm   Required to actually destroy — prevents accidental deletion.
- *   /override  Destroy even if the object has the SAFE flag.
+ * TinyMUX rules:
+ *   • Things and exits are destroyed immediately — no confirmation required.
+ *   • Rooms are NOT destroyed immediately. The GOING flag is set and destruction
+ *     is delayed. Calling @destroy again on a GOING room destroys it at once.
+ *   • /instant  — bypass delay; destroy room immediately.
+ *   • /override — destroy even if SAFE flag is set.
+ *   • DESTROY_OK on target: anyone holding it may destroy it (overrides SAFE).
  *
  * Examples:
- *   @destroy widget              — prompts for confirmation
- *   @destroy/confirm widget      — destroys the object
- *   @destroy/override/confirm #5 — destroys a SAFE-flagged object
+ *   @destroy widget
+ *   @destroy/override safe-widget
+ *   @destroy/instant hall
  */
 export default async (u: IUrsamuSDK) => {
   const actor      = u.me;
   const switches   = u.cmd.switches || [];
   const targetName = (u.cmd.args[0] || "").trim();
-  const confirm    = switches.includes("confirm") || switches.includes("override");
+  const instant    = switches.includes("instant");
   const override   = switches.includes("override");
 
   if (!targetName) {
-    u.send("Usage: @destroy[/confirm] <target>");
+    u.send("Usage: @destroy[/override][/instant] <target>");
     return;
   }
 
@@ -33,22 +34,55 @@ export default async (u: IUrsamuSDK) => {
   const target  = results[0];
   if (!target) { u.send(`Could not find target: ${targetName}`); return; }
 
-  if (!(await u.canEdit(actor, target))) { u.send("You can't destroy that."); return; }
-  if (target.flags.has("void"))          { u.send("You can't destroy the void."); return; }
-  if (target.flags.has("player"))        { u.send("Use %ch@toad%cn to destroy players."); return; }
+  if (target.flags.has("void"))   { u.send("You can't destroy the void."); return; }
+  if (target.flags.has("player")) { u.send("Use %ch@toad%cn to destroy players."); return; }
 
-  if (target.flags.has("safe") && !override) {
-    u.send(`${u.util.displayName(target, actor)} has the SAFE flag. Use %ch@destroy/override/confirm%cn to destroy it.`);
+  // ── DESTROY_OK ────────────────────────────────────────────────────────────
+  // If the target (or its owner) has DESTROY_OK, anyone holding the object
+  // may destroy it regardless of ownership, and SAFE is bypassed.
+  const destroyOk = target.flags.has("destroy_ok");
+  const isHolding = target.location === actor.id;
+  const isThingLike = !target.flags.has("room") && !target.flags.has("exit") && !target.flags.has("player");
+
+  let effectiveDestroyOk = destroyOk;
+  if (effectiveDestroyOk && isThingLike && !isHolding) {
+    // DESTROY_OK but actor isn't holding it — fall back to canEdit
+    if (!(await u.canEdit(actor, target))) {
+      u.send(`You must be holding ${u.util.displayName(target, actor)} to destroy it.`);
+      return;
+    }
+    // canEdit passed — still counts as effectiveDestroyOk
+  }
+
+  // ── Ownership check ───────────────────────────────────────────────────────
+  if (!effectiveDestroyOk && !(await u.canEdit(actor, target))) {
+    u.send("You can't destroy that.");
     return;
   }
 
-  if (!confirm) {
-    u.send(`Are you sure you want to destroy ${u.util.displayName(target, actor)} (#${target.id})?`);
-    u.send(`Use %ch@destroy/confirm ${targetName}%cn to confirm.`);
+  // ── SAFE check ────────────────────────────────────────────────────────────
+  if (target.flags.has("safe") && !override && !effectiveDestroyOk) {
+    u.send(`${u.util.displayName(target, actor)} has the SAFE flag. Use %ch@destroy/override%cn to destroy it.`);
     return;
   }
 
-  // Evict ALL connected occupants before destroying a room
+  // ── GOING flag for rooms ──────────────────────────────────────────────────
+  // TinyMUX: rooms are delayed up to 10 min. First call sets GOING; second
+  // call (or /instant or DESTROY_OK) destroys immediately.
+  if (target.flags.has("room") && !instant && !effectiveDestroyOk) {
+    if (!target.flags.has("going")) {
+      await u.db.modify(target.id, "$set", {
+        "data.going":   true,
+        "data.goingAt": Date.now() + 10 * 60 * 1000,
+      });
+      await u.setFlags(target.id, "going");
+      u.send(`${u.util.displayName(target, actor)} is going.  It will be destroyed in ten minutes.`);
+      return;
+    }
+    // Already GOING — destroy now
+  }
+
+  // ── Evict connected occupants before destroying a room ────────────────────
   if (target.flags.has("room")) {
     const occupants = await u.db.search({
       $and: [{ location: target.id }, { flags: /connected/i }],
@@ -64,7 +98,7 @@ export default async (u: IUrsamuSDK) => {
   await u.db.destroy(target.id);
   u.send(`You destroy ${displayName}.`);
 
-  // Refund quota to non-staff owner
+  // ── Quota refund to non-staff owner ───────────────────────────────────────
   const ownerId = target.state.owner as string | undefined;
   if (ownerId) {
     const ownerResults = await u.db.search({ id: ownerId });
@@ -75,18 +109,16 @@ export default async (u: IUrsamuSDK) => {
     }
   }
 
-  // Clean up orphaned exits
+  // ── Clean up orphaned exits ────────────────────────────────────────────────
   const orphans = await u.db.search({
     $and: [
       { $or: [{ "data.destination": target.id }, { location: target.id }] },
       { flags: /exit/i },
     ],
   });
-
   for (const exit of orphans) {
     await u.db.destroy(exit.id);
   }
-
   if (orphans.length > 0) {
     u.send(`${orphans.length} orphaned exit${orphans.length === 1 ? "" : "s"} also destroyed.`);
   }

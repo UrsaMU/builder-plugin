@@ -49,7 +49,7 @@ const onLogin = (_e: SessionEvent) => {
 
 export const plugin: IPlugin = {
   name:        "builder",
-  version:     "1.2.0",
+  version:     "1.3.0",
   description: "World-building commands and REST API — @dig, @open, @link, @describe, @examine, @oemit, and more.",
 
   init: async () => {

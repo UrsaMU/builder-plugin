@@ -102,13 +102,13 @@ describe("dig script", () => {
     await script(u as unknown as IUrsamuSDK);
   }
 
-  it("creates a room and deducts quota", async () => {
+  it("creates a room and deducts 10 quota (TinyMUX cost)", async () => {
     const u = mockU({ args: ["Library"], me: { state: { quota: 10 } } });
     await execDig(u);
     assertStringIncludes(u._sent[0], "Library");
     assertEquals(u._dbCreated.length, 1);
     assertEquals(u._dbCalls[0]?.[1], "$inc");
-    assertEquals((u._dbCalls[0]?.[2] as Record<string, number>)["data.quota"], -1);
+    assertEquals((u._dbCalls[0]?.[2] as Record<string, number>)["data.quota"], -10);
   });
 
   it("staff bypass quota check", async () => {
@@ -118,8 +118,8 @@ describe("dig script", () => {
     assertEquals(u._dbCalls.length, 0); // no quota deduction
   });
 
-  it("insufficient quota — no creation", async () => {
-    const u = mockU({ args: ["Library"], me: { flags: new Set(["player"]), state: { quota: 0 } } });
+  it("insufficient quota (9 < 10 cost) — no creation", async () => {
+    const u = mockU({ args: ["Library"], me: { flags: new Set(["player"]), state: { quota: 9 } } });
     await execDig(u);
     assertStringIncludes(u._sent[0], "quota");
     assertEquals(u._dbCreated.length, 0);
@@ -238,18 +238,9 @@ describe("wipe script", () => {
     await script(u as unknown as IUrsamuSDK);
   }
 
-  it("prompts for confirmation when no /confirm", async () => {
+  it("wipes all attributes immediately — no /confirm required (TinyMUX)", async () => {
     const widget = mockRoom({ id: "5", name: "widget", state: { attributes: [{ name: "COLOR", value: "red" }] } });
     const u = mockU({ args: ["widget"], searchResults: [widget] });
-    await execWipe(u);
-    // Script sends a preview line then a "use /confirm" line — check combined output
-    assertStringIncludes(u._sent.join(" "), "confirm");
-    assertEquals(u._dbCalls.length, 0);
-  });
-
-  it("wipes with /confirm switch", async () => {
-    const widget = mockRoom({ id: "5", name: "widget", state: { attributes: [{ name: "COLOR", value: "red" }] } });
-    const u = mockU({ args: ["widget"], switches: ["confirm"], searchResults: [widget] });
     await execWipe(u);
     assertStringIncludes(u._sent[0], "Wiped");
     assertEquals(u._dbCalls[0]?.[2], { "data.attributes": [] });
@@ -257,7 +248,7 @@ describe("wipe script", () => {
 
   it("no attributes — informs user", async () => {
     const widget = mockRoom({ id: "5", name: "widget", state: { attributes: [] } });
-    const u = mockU({ args: ["widget"], switches: ["confirm"], searchResults: [widget] });
+    const u = mockU({ args: ["widget"], searchResults: [widget] });
     await execWipe(u);
     assertStringIncludes(u._sent[0], "no attributes");
     assertEquals(u._dbCalls.length, 0);
@@ -272,20 +263,17 @@ describe("destroy script — quota refund + occupant eviction", () => {
     await script(u as unknown as IUrsamuSDK);
   }
 
-  it("prompts without /confirm", async () => {
-    const widget = mockRoom({ id: "5", name: "widget", flags: new Set(["thing"]) });
-    const u = mockU({ searchResults: [widget], args: ["widget"] });
-    await execDestroy(u);
-    assertStringIncludes(u._sent[0], "Are you sure");
-    assertEquals(u._dbDestroyed.length, 0);
-  });
-
-  it("destroys object with /confirm", async () => {
+  it("destroys thing immediately — no /confirm required (TinyMUX)", async () => {
     const widget = mockRoom({ id: "5", name: "widget", flags: new Set(["thing"]), state: { owner: "1" } });
     const owner  = mockPlayer({ id: "1", state: { quota: 5 } });
     let call = 0;
-    const u = mockU({ switches: ["confirm"], args: ["widget"] });
-    u.db.search = async () => call++ === 0 ? [widget] : call === 2 ? [] : call === 3 ? [owner] : [];
+    const u = mockU({ args: ["widget"] });
+    u.db.search = async (q: unknown) => {
+      call++;
+      if (call === 1) return [widget];
+      if (typeof q === "object" && (q as Record<string, unknown>).id === "1") return [owner];
+      return [];
+    };
     await execDestroy(u);
     assertStringIncludes(u._sent[0], "destroy");
     assertEquals(u._dbDestroyed[0], "5");
@@ -330,7 +318,7 @@ describe("destroy script — quota refund + occupant eviction", () => {
     const staff  = mockPlayer({ id: "99", flags: new Set(["wizard"]) });
     const teleportCalls: [string, string][] = [];
     let call = 0;
-    const u = mockU({ switches: ["confirm"], args: ["Hall"] });
+    const u = mockU({ switches: ["instant"], args: ["Hall"] }); // /instant bypasses GOING delay
     u.db.search = async (q: unknown) => {
       call++;
       if (call === 1) return [room];
@@ -352,7 +340,7 @@ describe("destroy script — quota refund + occupant eviction", () => {
     const staff = mockPlayer({ id: "99", flags: new Set(["wizard"]) });
     const teleportCalls: [string, string][] = [];
     let call = 0;
-    const u = mockU({ switches: ["confirm"], args: ["Hall"] });
+    const u = mockU({ switches: ["instant"], args: ["Hall"] }); // /instant bypasses GOING delay
     u.db.search = async (q: unknown) => {
       call++;
       if (call === 1) return [room];
@@ -376,16 +364,16 @@ describe("destroy script — quota refund + occupant eviction", () => {
 
 // ─── link tests (gap fixes) ───────────────────────────────────────────────────
 
-describe("link script — home keyword", () => {
+describe("link script — here/home keywords (TinyMUX)", () => {
   async function execLink(u: ReturnType<typeof mockU>) {
     const { default: script } = await import("../scripts/link.ts");
     await script(u as unknown as IUrsamuSDK);
   }
 
-  it("@link me=home sets player home to current room", async () => {
-    const actor = mockPlayer({ id: "1", flags: new Set(["player", "connected"]) });
-    const here  = mockRoom({ id: "2", name: "Lobby" });
-    const u = mockU({ args: ["me=home"], me: actor, here, searchResults: [actor] });
+  it("@link me=here sets player home to current room (TinyMUX 'here' keyword)", async () => {
+    const actor = mockPlayer({ id: "1", flags: new Set(["player", "connected"]), state: { quota: 50, owner: "1" } });
+    const here  = mockRoom({ id: "2", name: "Lobby", flags: new Set(["room", "abode"]) });
+    const u = mockU({ args: ["me=here"], me: actor, here, searchResults: [actor] });
     await execLink(u);
     assertStringIncludes(u._sent[0], "link");
     const homeCall = u._dbCalls.find(c => (c[2] as Record<string, unknown>)["data.home"] === "2");
@@ -393,36 +381,36 @@ describe("link script — home keyword", () => {
     assertEquals(homeCall?.[1], "$set");
   });
 
-  it("@link exit=home sets exit destination to current room", async () => {
-    const exit = mockRoom({ id: "7", name: "North", flags: new Set(["exit"]) });
-    const here = mockRoom({ id: "2", name: "Lobby" });
-    const u = mockU({ args: ["North=home"], here, searchResults: [exit] });
+  it("@link exit=here sets exit destination to current room", async () => {
+    const exit = mockRoom({ id: "7", name: "North", flags: new Set(["exit"]), state: { owner: "1" } });
+    const here = mockRoom({ id: "2", name: "Lobby", flags: new Set(["room", "link_ok"]) });
+    const u = mockU({ args: ["North=here"], here, searchResults: [exit] });
     await execLink(u);
     const destCall = u._dbCalls.find(c => (c[2] as Record<string, unknown>)["data.destination"] === "2");
     assertEquals(destCall?.[0], "7");
   });
 
-  it("@link room=home sets room dropto to current room", async () => {
-    const room = mockRoom({ id: "9", name: "Atrium" });
-    const here = mockRoom({ id: "2", name: "Lobby" });
-    const u = mockU({ args: ["Atrium=home"], here, searchResults: [room] });
+  it("@link room=here sets room dropto to current room", async () => {
+    const room = mockRoom({ id: "9", name: "Atrium", flags: new Set(["room"]) });
+    const here = mockRoom({ id: "2", name: "Lobby", flags: new Set(["room", "link_ok"]) });
+    const u = mockU({ args: ["Atrium=here"], here, searchResults: [room] });
     await execLink(u);
     const droptoCall = u._dbCalls.find(c => (c[2] as Record<string, unknown>)["data.dropto"] === "2");
     assertEquals(droptoCall?.[0], "9");
   });
 
-  it("@link me=home is case-insensitive (HOME, Home)", async () => {
-    const actor = mockPlayer({ id: "1" });
-    const here  = mockRoom({ id: "2" });
-    const u = mockU({ args: ["me=HOME"], me: actor, here, searchResults: [actor] });
+  it("@link me=here is case-insensitive (HERE, Here)", async () => {
+    const actor = mockPlayer({ id: "1", state: { quota: 50, owner: "1" } });
+    const here  = mockRoom({ id: "2", flags: new Set(["room", "abode"]) });
+    const u = mockU({ args: ["me=HERE"], me: actor, here, searchResults: [actor] });
     await execLink(u);
     const homeCall = u._dbCalls.find(c => (c[2] as Record<string, unknown>)["data.home"] === "2");
     assertEquals(homeCall?.[1], "$set");
   });
 
   it("@link with named destination still works", async () => {
-    const exit = mockRoom({ id: "7", flags: new Set(["exit"]) });
-    const dest = mockRoom({ id: "5", name: "Library" });
+    const exit = mockRoom({ id: "7", flags: new Set(["exit"]), state: { owner: "1" } });
+    const dest = mockRoom({ id: "5", name: "Library", flags: new Set(["room", "link_ok"]) });
     let call = 0;
     const u = mockU({ args: ["North=#5"] });
     u.db.search = async () => call++ === 0 ? [exit] : [dest];
@@ -431,11 +419,11 @@ describe("link script — home keyword", () => {
     assertEquals(destCall?.[0], "7");
   });
 
-  it("home keyword does not search db for destination", async () => {
-    const actor = mockPlayer({ id: "1" });
-    const here  = mockRoom({ id: "2" });
+  it("'here' keyword does not search db for destination", async () => {
+    const actor = mockPlayer({ id: "1", state: { quota: 50, owner: "1" } });
+    const here  = mockRoom({ id: "2", flags: new Set(["room", "abode"]) });
     let searchCount = 0;
-    const u = mockU({ args: ["me=home"], me: actor, here });
+    const u = mockU({ args: ["me=here"], me: actor, here });
     u.db.search = async () => { searchCount++; return [actor]; };
     await execLink(u);
     // Only one db.search call (for the target) — not two (target + destination)
