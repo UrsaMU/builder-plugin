@@ -23,6 +23,10 @@ function objectType(flags: Set<string>): string {
  * location, home, description, exits, contents, and attributes.
  * Defaults to the current room if no target is given.
  *
+ * Extension point: set `@examineformat` on the target to a softcode
+ * expression. It receives the default rendered telnet block as `%0`.
+ * Return a non-empty string to fully replace the default output.
+ *
  * Examples:
  *   @examine
  *   @examine widget
@@ -124,7 +128,22 @@ export default async (u: IUrsamuSDK) => {
       out += `  %ch${k.toUpperCase()}:%cn ${display}\n`;
     });
   }
-  u.send(out);
+  // EXAMINEFORMAT — full block override. %0 = default rendered telnet block.
+  // Resolves via softcode attribute on the target. Empty/missing → default.
+  let finalOut = out;
+  try {
+    const raw = await u.attr?.get?.(target.id, "EXAMINEFORMAT");
+    if (raw != null && String(raw).trim() !== "") {
+      const evaluated = await u.eval?.(target.id, "EXAMINEFORMAT", [out]);
+      if (evaluated != null && String(evaluated) !== "") {
+        finalOut = String(evaluated);
+      }
+    }
+  } catch (e: unknown) {
+    const msg = e instanceof Error ? e.message : String(e);
+    console.warn(`[builder-plugin examine] EXAMINEFORMAT eval failed on #${target.id}: ${msg}`);
+  }
+  u.send(finalOut);
 
   // Web UI
   const components: unknown[] = [];
