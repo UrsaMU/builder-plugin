@@ -1,6 +1,7 @@
 {
   "name": "@ursamu/builder-plugin",
   "version": "1.4.0",
+  "license": "MIT",
   "description": "World-building plugin for UrsaMU — @dig, @open, @link, @describe, @examine, and a REST API.",
   "exports": {
     ".": "./mod.ts"
@@ -8,6 +9,15 @@
   "publish": {
     "include": ["scripts", "mod.ts", "index.ts", "routes.ts", "batchbuild.ts", "deno.json", "README.md"],
     "exclude": ["tests"]
+  },
+  "tasks": {
+    "test": "deno test --allow-all --unstable-kv --no-check tests/"
+  },
+  "lint": {
+    "exclude": ["tests/"],
+    "rules": {
+      "exclude": ["no-import-prefix", "no-unversioned-import", "require-await"]
+    }
   },
   "imports": {
     "jsr:@ursamu/ursamu": "jsr:@ursamu/ursamu@^2.3.0",

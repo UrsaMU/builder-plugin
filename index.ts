@@ -71,7 +71,7 @@ export const plugin: IPlugin = {
 
     // Soft-register help directory with ursamu-help-plugin (optional dependency)
     try {
-      const { registerHelpDir } = await import("jsr:@ursamu/help-plugin");
+      const { registerHelpDir } = await import("jsr:@ursamu/help-plugin@^1.0.0");
       registerHelpDir(new URL("./help", import.meta.url).pathname, "building");
     } catch {
       // ursamu-help-plugin not installed — in-game help unavailable for builder commands

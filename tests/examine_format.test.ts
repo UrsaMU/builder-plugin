@@ -3,7 +3,7 @@
  * pattern, using mock SDK (the plugin scripts run in the sandbox in production;
  * here we exercise the script directly with a mock `u.attr` + `u.eval`).
  */
-import { assertEquals, assertStringIncludes } from "jsr:@std/assert";
+import { type assertEquals, assertStringIncludes } from "jsr:@std/assert";
 import { describe, it } from "jsr:@std/testing/bdd";
 import type { IDBObj, IUrsamuSDK } from "jsr:@ursamu/ursamu";
 
