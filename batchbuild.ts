@@ -49,7 +49,8 @@ async function ensureBuildsDir(): Promise<void> {
 async function findZmo(name: string) {
   const all   = await dbojs.find({ flags: /zone/i });
   const clean = name.trim().toLowerCase();
-  return all.find((z: Record<string, unknown>) => {
+  return all.find((raw) => {
+    const z = raw as unknown as Record<string, unknown>;
     const zName = ((z.data as Record<string, unknown>)?.name as string ?? "").toLowerCase();
     const zId   = z.id as string;
     return zId === clean.replace(/^#/, "") || zName === clean;
@@ -62,9 +63,10 @@ async function generateScript(zmo: Awaited<ReturnType<typeof findZmo>>): Promise
 
   const zoneName = (zmo.data as Record<string, unknown>)?.name as string ?? zmo.id;
   const allRooms = await dbojs.find({ flags: /room/i });
-  const rooms    = allRooms.filter((r: Record<string, unknown>) =>
-    ((r.data as Record<string, unknown>)?.zone) === (zmo.id as string)
-  );
+  const rooms    = allRooms.filter((raw) => {
+    const r = raw as unknown as Record<string, unknown>;
+    return ((r.data as Record<string, unknown>)?.zone) === (zmo.id as string);
+  });
 
   const now  = new Date().toISOString().slice(0, 10);
   const lines: string[] = [
@@ -83,12 +85,12 @@ async function generateScript(zmo: Awaited<ReturnType<typeof findZmo>>): Promise
   const exits = await dbojs.find({ flags: /exit/i });
 
   for (const rawRoom of rooms) {
-    const room     = rawRoom as Record<string, unknown>;
+    const room     = rawRoom as unknown as Record<string, unknown>;
     const roomData = room.data as Record<string, unknown> ?? {};
     const roomId   = room.id as string;
     const roomName = roomData.name as string ?? `Room #${roomId}`;
     const desc     = roomData.description as string ?? "";
-    const roomExits = exits.filter((e: Record<string, unknown>) => e.location === roomId);
+    const roomExits = exits.filter((rawE) => (rawE as unknown as Record<string, unknown>).location === roomId);
 
     lines.push(`# ─── Room: ${roomName} (#${roomId}) ───`);
     lines.push(`@dig/teleport ${sanitizeForScript(roomName)}`);
@@ -98,15 +100,15 @@ async function generateScript(zmo: Awaited<ReturnType<typeof findZmo>>): Promise
     lines.push(`@zone/add here=${sanitizeForScript(zoneName)}`);
 
     for (const rawExit of roomExits) {
-      const exit     = rawExit as Record<string, unknown>;
+      const exit     = rawExit as unknown as Record<string, unknown>;
       const exitData = exit.data as Record<string, unknown> ?? {};
       const exitName = exitData.name as string ?? "Exit";
       const destId   = exitData.destination as string ?? "";
-      const destRoom = rooms.find((r: Record<string, unknown>) => r.id === destId);
+      const destRoom = rooms.find((r) => (r as unknown as Record<string, unknown>).id === destId);
       // Only emit exits whose destination is inside this zone — cross-zone
       // exits reference external IDs and can't be safely reconstructed.
       if (destRoom) {
-        const destData = (destRoom as Record<string, unknown>).data as Record<string, unknown> ?? {};
+        const destData = (destRoom as unknown as Record<string, unknown>).data as Record<string, unknown> ?? {};
         const destName = destData.name as string ?? `#${destId}`;
         lines.push(`@open ${sanitizeForScript(exitName)}=${sanitizeForScript(destName)}`);
       } else if (destId) {
